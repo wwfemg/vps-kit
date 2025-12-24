@@ -56,7 +56,7 @@ while [[ -z "$UI_PORT" ]]; do
     fi
 done
 
-# --- 邮箱自动生成 (这个可以偷懒，不影响登录) ---
+# --- 邮箱自动生成 ---
 EMAIL="admin@${DOMAIN}"
 
 echo -e "${YELLOW}======================================${PLAIN}"
@@ -82,17 +82,37 @@ if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
 fi
 
 # ==========================================
-# 3. 安装 3x-ui
+# 3. 安装 3x-ui (修复版：不交互，直接改库)
 # ==========================================
 echo -e "${GREEN}[2/7] 安装 3x-ui 面板...${PLAIN}"
-# 使用非交互模式安装 x-ui，传入刚才强制收集的变量
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) <<EOF
-y
-${NAIVE_USER}
-${NAIVE_PASS}
-${UI_PORT}
-EOF
-# 注意：这里为了方便记忆，直接把 3x-ui 的账号密码设置成和 Naive 一样
+
+# 这里输入 "n" 表示不自定义，让它生成随机账号（反正我们后面会改）
+# 输入 "y" 表示确认安装/更新
+bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) <<< "y
+n"
+
+echo -e "${YELLOW}正在通过数据库强制同步账号密码...${PLAIN}"
+sleep 2
+systemctl stop x-ui
+
+# 强制修改数据库
+DB_FILE="/etc/x-ui/x-ui.db"
+if [ -f "$DB_FILE" ]; then
+    # 修改用户名
+    sqlite3 "$DB_FILE" "update settings set value='${NAIVE_USER}' where key='username';"
+    # 修改密码
+    sqlite3 "$DB_FILE" "update settings set value='${NAIVE_PASS}' where key='password';"
+    # 修改端口
+    sqlite3 "$DB_FILE" "update settings set value='${UI_PORT}' where key='port';"
+    # 重置 Web 根路径为 / (防止出现随机路径)
+    sqlite3 "$DB_FILE" "update settings set value='/' where key='webBasePath';"
+    
+    echo -e "${GREEN}>>> 3x-ui 账号密码已强制同步成功！<<<${PLAIN}"
+else
+    echo -e "${RED}严重错误：未找到数据库文件，面板可能未安装成功。${PLAIN}"
+fi
+
+systemctl start x-ui
 
 # ==========================================
 # 4. 安装官方 Caddy
