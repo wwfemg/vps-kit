@@ -91,21 +91,20 @@ echo "------------------------------------------"
 echo "3x-ui 安装日志: $INSTALL_LOG"
 echo "=========================================="
 
-# ================== 追加：详细状态打印 ==================
+# ================== 最终状态打印（真实、不误导） ==================
 
 CADDY_STATUS=$(systemctl is-active caddy || true)
 BBR_STATUS=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
 
 echo
-echo "============= 运行状态汇总 ============="
-echo "域名           : [已隐藏]"
+echo "============= 部署完成状态 ============="
 echo "面板地址       : https://$DOMAIN$WEB_PATH"
 echo "3x-ui 端口     : $PORT"
 echo "----------------------------------------"
 echo "Caddy 状态     : $CADDY_STATUS"
 echo "BBR 拥塞控制   : $BBR_STATUS"
 echo "----------------------------------------"
+echo "x-ui 数据库    : /etc/x-ui/x-ui.db"
 echo "Caddy 配置     : /etc/caddy/Caddyfile"
-echo "3x-ui 配置     : /etc/x-ui/config.json"
 echo "安装日志       : $INSTALL_LOG"
 echo "========================================"
