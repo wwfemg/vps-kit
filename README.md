@@ -8,4 +8,4 @@ apt update -y && apt install -y wget && wget -O install.sh https://raw.githubuse
 如果忘记，记得用这个查询：vp
 
 
-wget -O install.sh [https://raw.githubusercontent.com/wwfemg/vps-kit/main/install.sh](https://raw.githubusercontent.com/wwfemg/vps-kit/main/install.sh) && bash install.sh
+wget -O install.sh https://raw.githubusercontent.com/wwfemg/vps-kit/main/install.sh && bash install.sh
