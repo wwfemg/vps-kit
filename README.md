@@ -5,7 +5,7 @@ Debian VPS 全自动部署脚本：**NaiveProxy (Caddy编译版) + 3x-ui 面板*
 
 apt update -y && apt install -y wget && wget -O install.sh https://raw.githubusercontent.com/wwfemg/vps-kit/main/install.sh && bash install.sh
 
-如果忘记，记得用这个查询：vpsinfo
+如果忘记，记得用这个查询：vp
 
 
 wget -O install.sh [https://raw.githubusercontent.com/wwfemg/vps-kit/main/install.sh](https://raw.githubusercontent.com/wwfemg/vps-kit/main/install.sh) && bash install.sh
