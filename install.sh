@@ -2,18 +2,25 @@
 set -euo pipefail
 
 # ==========================================================
-# VPS-KIT V9.0 (Debian Only) - 最终量产版
-# 1. 默认高位端口: 61999 (防扫描)
-# 2. 默认隐蔽路径: /Macbook (防猜测，直接访问域名无法打开)
-# 3. 全自动安装 3x-ui + Caddy + NaiveProxy
-# 4. 强制写入配置 + 暴力重启 = 100% 生效
+# VPS-KIT V9.2 (Debian Only) - Strict Config Match Edition
+# 1. 严格使用 [localhost] 替代 IP，与您提供的原始配置完全一致
+# 2. 红色警戒交互：所有用户输入提示均为红色
+# 3. 默认端口 61999，默认路径 /Macbook
+# 4. 暴力重启：确保配置秒级生效
 # ==========================================================
 
 # -----------------------------
-# 0. 辅助函数
+# 0. 颜色与辅助函数
 # -----------------------------
+RED='\033[1;31m'    # 亮红色
+GREEN='\033[1;32m'  # 亮绿色
+YELLOW='\033[1;33m' # 亮黄色
+NC='\033[0m'        # 清除颜色
+
 hr() { printf "%s\n" "=================================================="; }
-log() { echo "[INFO] $*"; }
+log() { echo -e "${GREEN}[INFO] $*${NC}"; }
+warn() { echo -e "${YELLOW}[WARN] $*${NC}"; }
+ask_red() { echo -e -n "${RED}$* ${NC}"; }
 
 # -----------------------------
 # 1. 全局变量初始化
@@ -28,7 +35,7 @@ NAIVE_USER=""
 NAIVE_PASS=""
 
 # -----------------------------
-# 2. 用户输入 (一次性收集所有信息)
+# 2. 用户输入 (红色交互)
 # -----------------------------
 ask_inputs() {
   hr
@@ -40,7 +47,8 @@ ask_inputs() {
   echo "  A) 3x-ui + Caddy (HTTPS Only)"
   echo "  B) 3x-ui + Caddy + NaiveProxy (推荐)"
   while true; do
-    read -rp "请输入 (A/B): " MODE
+    ask_red "请输入模式 (A/B):"
+    read -r MODE
     MODE="$(echo "${MODE}" | tr '[:lower:]' '[:upper:]' | tr -d ' ')"
     case "${MODE}" in
       A|B) break ;;
@@ -50,7 +58,8 @@ ask_inputs() {
 
   # 2. 域名
   while true; do
-    read -rp "请输入域名 (Domain): " DOMAIN
+    ask_red "请输入域名 (Domain):"
+    read -r DOMAIN
     DOMAIN="$(echo "${DOMAIN}" | tr -d ' ')"
     [[ -n "${DOMAIN}" ]] && break
     echo "域名不能为空。"
@@ -58,20 +67,22 @@ ask_inputs() {
 
   # 3. 3x-ui 端口 (默认 61999)
   echo "------------------------------------------------"
-  echo "提示：建议使用高位端口，避免被扫描。"
-  read -rp "设置 3x-ui 端口 (回车默认 61999): " input_port
+  warn "提示：建议使用高位端口，避免被扫描。"
+  ask_red "设置 3x-ui 端口 (回车默认 61999):"
+  read -r input_port
   XUI_PORT="${input_port:-61999}"
   # 校验是否为纯数字
   if ! [[ "$XUI_PORT" =~ ^[0-9]+$ ]]; then
-    echo "警告：端口必须是数字，已重置为 61999"
+    warn "警告：端口必须是数字，已重置为 61999"
     XUI_PORT="61999"
   fi
 
   # 4. 3x-ui 根路径 (默认 /Macbook)
   echo "------------------------------------------------"
-  echo "提示：设置隐蔽路径可增加安全性 (黑客猜不到)。"
-  echo "默认路径设置为: /Macbook"
-  read -rp "设置 3x-ui 根路径 (回车默认为 /Macbook): " input_path
+  warn "提示：设置隐蔽路径可增加安全性。"
+  warn "默认路径设置为: /Macbook"
+  ask_red "设置 3x-ui 根路径 (回车默认为 /Macbook):"
+  read -r input_path
   XUI_PATH="${input_path:-/Macbook}"
   
   # 智能修正：确保路径以 / 开头
@@ -81,21 +92,25 @@ ask_inputs() {
 
   # 5. 3x-ui 账号密码
   echo "------------------------------------------------"
-  read -rp "设置 3x-ui 用户名 (默认 admin): " input_user
+  ask_red "设置 3x-ui 用户名 (默认 admin):"
+  read -r input_user
   XUI_USER="${input_user:-admin}"
   
-  read -rp "设置 3x-ui 密码 (默认 admin): " input_pass
+  ask_red "设置 3x-ui 密码 (默认 admin):"
+  read -r input_pass
   XUI_PASS="${input_pass:-admin}"
 
   # 6. Naive 账号 (仅 B 模式)
   if [[ "${MODE}" == "B" ]]; then
     echo "------------------------------------------------"
     while true; do
-      read -rp "设置 Naive 代理用户名: " NAIVE_USER
+      ask_red "设置 Naive 代理用户名:"
+      read -r NAIVE_USER
       [[ -n "${NAIVE_USER}" ]] && break
     done
     while true; do
-      read -rp "设置 Naive 代理密码: " NAIVE_PASS
+      ask_red "设置 Naive 代理密码:"
+      read -r NAIVE_PASS
       [[ -n "${NAIVE_PASS}" ]] && break
     done
   fi
@@ -204,7 +219,7 @@ configure_xui_force() {
     -port "${XUI_PORT}" \
     -webBasePath "${XUI_PATH}" >/dev/null 2>&1 || true
   
-  # 2. 暴力重启 (杀进程以确保端口立即释放，这步很关键)
+  # 2. 暴力重启 (关键步骤)
   log "Restarting x-ui (Force Mode)..."
   pkill -9 x-ui || true
   sleep 2
@@ -216,10 +231,11 @@ write_caddyfile() {
   log "Writing Caddyfile..."
   mkdir -p /etc/caddy
   
-  # Caddy 只负责把流量转给 127.0.0.1:端口
-  # 具体路径 (/Macbook) 由 x-ui 内部处理
+  # === 这里的格式严格参考您提供的原始代码 ===
+  # 统一使用 localhost，不使用 127.0.0.1
   
   if [[ "${MODE}" == "A" ]]; then
+    # Mode A: 参考您的[解析好的域名]格式
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     root * /usr/share/caddy
@@ -228,6 +244,7 @@ ${DOMAIN} {
 }
 EOF
   else
+    # Mode B: 参考您的[域名]格式 (带 Naive)
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     route {
@@ -245,7 +262,7 @@ EOF
 }
 
 # -----------------------------
-# 6. 生成打印命令 (所见即所得)
+# 6. 生成打印命令
 # -----------------------------
 create_vps_command() {
   cat > /etc/vps-kit.conf <<EOF
