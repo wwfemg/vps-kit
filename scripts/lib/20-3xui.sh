@@ -2,7 +2,10 @@
 set -euo pipefail
 
 # ==================================================
-# 3x-ui installation (NON-interactive, safe return)
+# 3x-ui installation
+# - NON-interactive
+# - NO script modification
+# - MUST return to main flow
 # ==================================================
 
 install_3xui() {
@@ -11,7 +14,7 @@ install_3xui() {
     return
   fi
 
-  echo "[INFO] Installing 3x-ui (non-interactive)..."
+  echo "[INFO] Installing 3x-ui (non-interactive, default answers)..."
 
   export DEBIAN_FRONTEND=noninteractive
   TMP_INSTALLER="/tmp/3xui_install.sh"
@@ -19,10 +22,8 @@ install_3xui() {
   curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh -o "$TMP_INSTALLER"
   chmod +x "$TMP_INSTALLER"
 
-  # 强制所有 y/n 走默认（n），避免阻塞 & 吃掉主流程
-  sed -i 's/read -r answer/answer=n/g' "$TMP_INSTALLER"
-
-  bash "$TMP_INSTALLER"
+  # Feed ENTER to accept defaults, avoid any blocking prompt
+  printf "\n" | bash "$TMP_INSTALLER"
 
   rm -f "$TMP_INSTALLER"
 
@@ -31,12 +32,12 @@ install_3xui() {
     exit 1
   fi
 
-  echo "[INFO] 3x-ui installed successfully, returning to main installer."
+  echo "[INFO] 3x-ui installed successfully."
 }
 
 # ==================================================
 # 3x-ui automatic account configuration
-# (must be called AFTER installation)
+# (CALLED ONLY AFTER all installs are done)
 # ==================================================
 
 configure_3xui_account() {
@@ -52,12 +53,16 @@ configure_3xui_account() {
 
   echo "[INFO] Configuring 3x-ui panel account..."
 
+  # Menu flow (validated):
+  # Enter → 6 → y → user → pass → y → Enter → 0 → 0
   printf "\n6\ny\n%s\n%s\ny\n\n0\n0\n" "$XUI_USER" "$XUI_PASS" | x-ui
 
   echo "[INFO] 3x-ui account configured and panel restarted."
 }
 
-# debug hooks
+# --------------------------------------------------
+# Debug hooks (LOCAL TEST ONLY)
+# --------------------------------------------------
 if [[ "${1:-}" == "install" ]]; then
   install_3xui
 elif [[ "${1:-}" == "configure" ]]; then

@@ -2,22 +2,46 @@
 set -euo pipefail
 
 # ==================================================
-# Caddy configuration
-# stage1 / stage2 FINAL LOGIC
+# Caddy install & configuration
+# FINAL – controlled by install.sh
 # ==================================================
 
 CADDYFILE_PATH="/etc/caddy/Caddyfile"
 
 # --------------------------------------------------
-# Get 3x-ui actual listen port AFTER installation
+# Install Caddy (SERVICE ONLY, NO CONFIG)
+# --------------------------------------------------
+install_caddy() {
+  if command -v caddy >/dev/null 2>&1; then
+    echo "[INFO] Caddy already installed. Skipping."
+    return
+  fi
+
+  echo "[INFO] Installing Caddy..."
+
+  apt update
+  apt install -y debian-keyring debian-archive-keyring apt-transport-https curl gpg
+
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    | tee /etc/apt/sources.list.d/caddy-stable.list
+
+  apt update
+  apt install -y caddy
+
+  echo "[INFO] Caddy installed."
+}
+
+# --------------------------------------------------
+# Get 3x-ui listen port AFTER installation
 # --------------------------------------------------
 get_xui_port() {
-  # Try x-ui settings output (preferred)
   if command -v x-ui >/dev/null 2>&1; then
     XUI_PORT="$(x-ui settings 2>/dev/null | awk -F': ' '/listen_port/{print $2}' | head -n1)"
   fi
 
-  # Fallback: default 2053 if still empty
   if [[ -z "${XUI_PORT:-}" ]]; then
     XUI_PORT="2053"
   fi
@@ -26,9 +50,9 @@ get_xui_port() {
 }
 
 # --------------------------------------------------
-# Stage 1: simple HTTPS + static + reverse_proxy
+# Stage 1: HTTPS + static + reverse_proxy
 # --------------------------------------------------
-setup_caddy_stage1() {
+configure_caddy_stage1() {
   get_xui_port
 
   if [[ -z "${INSTALL_DOMAIN:-}" ]]; then
@@ -36,7 +60,7 @@ setup_caddy_stage1() {
     exit 1
   fi
 
-  echo "[INFO] Writing Caddyfile for stage1 (simple mode)"
+  echo "[INFO] Writing Caddyfile (stage1)"
 
   cat > "$CADDYFILE_PATH" <<CADDY
 ${INSTALL_DOMAIN} {
@@ -45,14 +69,13 @@ ${INSTALL_DOMAIN} {
     reverse_proxy localhost:${XUI_PORT}
 }
 CADDY
-
-  reload_caddy
 }
 
 # --------------------------------------------------
-# Stage 2: NaiveProxy + reverse_proxy (NO static)
+# Stage 2: NaiveProxy + reverse_proxy
+# (NO stage1 config, NO static)
 # --------------------------------------------------
-setup_caddy_stage2() {
+configure_caddy_stage2() {
   get_xui_port
 
   if [[ -z "${INSTALL_DOMAIN:-}" || -z "${NAIVE_USERNAME:-}" || -z "${NAIVE_PASSWORD:-}" ]]; then
@@ -60,7 +83,7 @@ setup_caddy_stage2() {
     exit 1
   fi
 
-  echo "[INFO] Writing Caddyfile for stage2 (NaiveProxy mode)"
+  echo "[INFO] Writing Caddyfile (stage2 / NaiveProxy)"
 
   cat > "$CADDYFILE_PATH" <<CADDY
 ${INSTALL_DOMAIN} {
@@ -75,12 +98,10 @@ ${INSTALL_DOMAIN} {
     }
 }
 CADDY
-
-  reload_caddy
 }
 
 # --------------------------------------------------
-# Reload / start Caddy
+# Reload / start Caddy (CALLED ONCE by install.sh)
 # --------------------------------------------------
 reload_caddy() {
   if systemctl is-active --quiet caddy; then
@@ -90,22 +111,4 @@ reload_caddy() {
     systemctl start caddy
     echo "[INFO] Caddy started"
   fi
-}
-
-# --------------------------------------------------
-# Dispatcher
-# --------------------------------------------------
-run_caddy() {
-  case "$INSTALL_MODE" in
-    stage1)
-      setup_caddy_stage1
-      ;;
-    stage2)
-      setup_caddy_stage2
-      ;;
-    *)
-      echo "[ERROR] Unknown INSTALL_MODE: $INSTALL_MODE"
-      exit 1
-      ;;
-  esac
 }
