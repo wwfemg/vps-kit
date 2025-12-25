@@ -2,11 +2,10 @@
 set -euo pipefail
 
 # ==========================================================
-# VPS-KIT V9.2 (Debian Only) - Strict Config Match Edition
-# 1. 严格使用 [localhost] 替代 IP，与您提供的原始配置完全一致
-# 2. 红色警戒交互：所有用户输入提示均为红色
-# 3. 默认端口 61999，默认路径 /Macbook
-# 4. 暴力重启：确保配置秒级生效
+# VPS-KIT V9.4 (Debian Only) - 经典文案复刻版
+# 1. 打印风格：严格遵照作者定义的“妥善保管”警示文案
+# 2. 技术内核：基于 V9.3 (依赖补全 + 失败检测 + 真实回读)
+# 3. 核心机制：红色交互 + 密码隐形 + 暴力重启生效
 # ==========================================================
 
 # -----------------------------
@@ -20,6 +19,7 @@ NC='\033[0m'        # 清除颜色
 hr() { printf "%s\n" "=================================================="; }
 log() { echo -e "${GREEN}[INFO] $*${NC}"; }
 warn() { echo -e "${YELLOW}[WARN] $*${NC}"; }
+err() { echo -e "${RED}[ERROR] $*${NC}" >&2; }
 ask_red() { echo -e -n "${RED}$* ${NC}"; }
 
 # -----------------------------
@@ -35,7 +35,7 @@ NAIVE_USER=""
 NAIVE_PASS=""
 
 # -----------------------------
-# 2. 用户输入 (红色交互)
+# 2. 用户输入 (红字交互 + 密码隐形)
 # -----------------------------
 ask_inputs() {
   hr
@@ -90,17 +90,18 @@ ask_inputs() {
   # 去除可能多余的末尾斜杠
   XUI_PATH="${XUI_PATH%/}"
 
-  # 5. 3x-ui 账号密码
+  # 5. 3x-ui 账号密码 (密码隐形)
   echo "------------------------------------------------"
   ask_red "设置 3x-ui 用户名 (默认 admin):"
   read -r input_user
   XUI_USER="${input_user:-admin}"
   
-  ask_red "设置 3x-ui 密码 (默认 admin):"
-  read -r input_pass
+  ask_red "设置 3x-ui 密码 (输入时不显示):"
+  read -r -s input_pass
+  echo "" 
   XUI_PASS="${input_pass:-admin}"
 
-  # 6. Naive 账号 (仅 B 模式)
+  # 6. Naive 账号 (仅 B 模式，密码隐形)
   if [[ "${MODE}" == "B" ]]; then
     echo "------------------------------------------------"
     while true; do
@@ -109,8 +110,9 @@ ask_inputs() {
       [[ -n "${NAIVE_USER}" ]] && break
     done
     while true; do
-      ask_red "设置 Naive 代理密码:"
-      read -r NAIVE_PASS
+      ask_red "设置 Naive 代理密码 (输入时不显示):"
+      read -r -s NAIVE_PASS
+      echo "" 
       [[ -n "${NAIVE_PASS}" ]] && break
     done
   fi
@@ -129,12 +131,13 @@ enable_bbr() {
 }
 
 # -----------------------------
-# 4. 软件安装 (3x-ui, Caddy, Go, Naive)
+# 4. 软件安装 (V9.3 技术内核)
 # -----------------------------
 install_base() {
   log "Updating system..."
   apt update -y
-  apt install -y curl wget socat vim git
+  # 补全依赖，防止 timeout 报错
+  apt install -y curl wget socat vim git coreutils
 }
 
 install_xui() {
@@ -148,6 +151,12 @@ install_xui() {
     # 静默安装
     ( yes "" | timeout 1800 bash "${tmp}" ) || true
     rm -f "${tmp}"
+  fi
+  
+  # 硬性校验：安装失败则退出
+  if ! command -v x-ui >/dev/null 2>&1; then
+    err "[FATAL] 3x-ui install failed or not found! Aborting."
+    exit 1
   fi
 }
 
@@ -164,7 +173,6 @@ install_caddy_official() {
 install_naive_core() {
   if [[ "${MODE}" != "B" ]]; then return 0; fi
   
-  # 架构检测
   local arch
   case "$(uname -m)" in
     x86_64|amd64) arch="amd64" ;;
@@ -172,7 +180,6 @@ install_naive_core() {
     *) echo "Unsupported arch"; exit 1 ;;
   esac
 
-  # 下载 Go
   local json url
   json="$(curl -fsSL "https://go.dev/dl/?mode=json" || true)"
   local ver="$(echo "${json}" | grep -oE '"version":"go[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4 || echo "go1.22.6")"
@@ -204,38 +211,48 @@ install_naive_core() {
 }
 
 # -----------------------------
-# 5. 配置生效 (强制修改 + 暴力重启)
+# 5. 配置生效 (优雅重启 + 真实回读)
 # -----------------------------
 configure_xui_force() {
   hr
   log "Applying settings to 3x-ui..."
   hr
   
-  # 1. 强制写入所有配置 (含账号、密码、端口、路径)
-  # 使用官方 CLI 命令
+  # 1. 强制写入配置
   /usr/local/x-ui/x-ui setting \
     -username "${XUI_USER}" \
     -password "${XUI_PASS}" \
     -port "${XUI_PORT}" \
     -webBasePath "${XUI_PATH}" >/dev/null 2>&1 || true
   
-  # 2. 暴力重启 (关键步骤)
-  log "Restarting x-ui (Force Mode)..."
-  pkill -9 x-ui || true
-  sleep 2
+  # 2. 标准重启
+  log "Restarting x-ui..."
   systemctl restart x-ui
   sleep 3
+
+  # 3. 回读真实配置 (防打印造假)
+  log "Verifying actual settings..."
+  local raw_settings
+  raw_settings=$(/usr/local/x-ui/x-ui settings 2>/dev/null || true)
+  
+  local real_port
+  local real_path
+  
+  real_port=$(echo "$raw_settings" | grep -i port | grep -oE '[0-9]+' | head -n1)
+  real_path=$(echo "$raw_settings" | grep -i web | awk '{print $NF}' | tr -d '[:space:]')
+  
+  if [[ -n "$real_port" ]]; then XUI_PORT="$real_port"; fi
+  if [[ -n "$real_path" ]]; then XUI_PATH="$real_path"; fi
+  
+  log "Verified Config -> Port: ${XUI_PORT}, Path: ${XUI_PATH}"
 }
 
 write_caddyfile() {
   log "Writing Caddyfile..."
   mkdir -p /etc/caddy
   
-  # === 这里的格式严格参考您提供的原始代码 ===
-  # 统一使用 localhost，不使用 127.0.0.1
-  
+  # 统一使用 localhost，严格匹配原始配置逻辑
   if [[ "${MODE}" == "A" ]]; then
-    # Mode A: 参考您的[解析好的域名]格式
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     root * /usr/share/caddy
@@ -244,7 +261,6 @@ ${DOMAIN} {
 }
 EOF
   else
-    # Mode B: 参考您的[域名]格式 (带 Naive)
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     route {
@@ -262,7 +278,7 @@ EOF
 }
 
 # -----------------------------
-# 6. 生成打印命令
+# 6. 生成打印命令 (100% 还原用户定义文案)
 # -----------------------------
 create_vps_command() {
   cat > /etc/vps-kit.conf <<EOF
@@ -280,22 +296,24 @@ EOF
 #!/bin/bash
 source /etc/vps-kit.conf 2>/dev/null || exit 1
 
+# === 严格复刻您最初定义的打印格式 ===
+
 echo
 echo "###############################################"
-echo "3x-ui 用户配置清单"
+# 恢复文案：警示语气 + 登录语义
+echo "3x-ui登录的用户名密码，妥善保管。"
 echo "Username:    ${XUI_USER}"
 echo "Password:    ${XUI_PASS}"
 echo "Port:        ${XUI_PORT} (Internal)"
 echo "WebBasePath: ${XUI_PATH}"
-echo "-----------------------------------------------"
 echo "Access URL:  https://${DOMAIN}${XUI_PATH}"
-echo "(请妥善保存上方链接，否则无法访问面板)"
 echo "###############################################"
 
 if [[ "${MODE}" == "B" ]]; then
 echo
 echo "###############################################"
-echo "Naiveproxy 配置"
+# 恢复文案：追加内容 + 警示语气
+echo "Naiveproxy用户名和密码，妥善保管"
 echo "Username: ${NAIVE_USER}"
 echo "Password: ${NAIVE_PASS}"
 echo "Probe:    https://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}"
