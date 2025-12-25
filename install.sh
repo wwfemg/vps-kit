@@ -2,112 +2,107 @@
 set -euo pipefail
 
 # ==========================================================
-# VPS-KIT V5.0 (Debian Only) - Auto-Discovery Edition
-# 1. 尊重原厂默认设置 (使用官方随机生成的端口)
-# 2. 自动抓取配置 (不强制修改，而是自动读取)
-# 3. 彻底解决交互卡死问题
+# VPS-KIT V9.0 (Debian Only) - 最终量产版
+# 1. 默认高位端口: 61999 (防扫描)
+# 2. 默认隐蔽路径: /Macbook (防猜测，直接访问域名无法打开)
+# 3. 全自动安装 3x-ui + Caddy + NaiveProxy
+# 4. 强制写入配置 + 暴力重启 = 100% 生效
 # ==========================================================
 
 # -----------------------------
-# Helpers
+# 0. 辅助函数
 # -----------------------------
 hr() { printf "%s\n" "=================================================="; }
 log() { echo "[INFO] $*"; }
-err() { echo "[ERROR] $*" >&2; }
-warn_box() {
-  hr
-  echo "正在进行最终配置，请耐心等待..."
-  echo "Configuring services..."
-  hr
-}
 
 # -----------------------------
-# Global Vars
+# 1. 全局变量初始化
 # -----------------------------
 MODE=""
 DOMAIN=""
 XUI_USER=""
 XUI_PASS=""
+XUI_PORT=""
+XUI_PATH=""
 NAIVE_USER=""
 NAIVE_PASS=""
-# 这一版我们不预设端口，而是稍后抓取
-REAL_PORT=""
-REAL_PATH=""
 
 # -----------------------------
-# 1. Input Section
+# 2. 用户输入 (一次性收集所有信息)
 # -----------------------------
-ask_mode() {
+ask_inputs() {
   hr
-  echo "请选择安装模式 / Select install mode:"
+  echo ">>> 第一步：配置收集 (Configuration)"
+  hr
+
+  # 1. 模式选择
+  echo "请选择安装模式:"
   echo "  A) 3x-ui + Caddy (HTTPS Only)"
-  echo "  B) 3x-ui + Caddy + NaiveProxy (Full Performance)"
-  hr
+  echo "  B) 3x-ui + Caddy + NaiveProxy (推荐)"
   while true; do
-    read -rp "请输入 A 或 B / Enter A or B: " MODE
+    read -rp "请输入 (A/B): " MODE
     MODE="$(echo "${MODE}" | tr '[:lower:]' '[:upper:]' | tr -d ' ')"
     case "${MODE}" in
-      A|B) return 0 ;;
-      *) echo "输入无效 / Invalid input." ;;
+      A|B) break ;;
+      *) echo "输入无效。" ;;
     esac
   done
-}
 
-ask_domain_required() {
-  hr
-  echo "【必须输入】域名 / Domain (REQUIRED)"
-  hr
+  # 2. 域名
   while true; do
-    read -rp "请输入域名: " DOMAIN
+    read -rp "请输入域名 (Domain): " DOMAIN
     DOMAIN="$(echo "${DOMAIN}" | tr -d ' ')"
     [[ -n "${DOMAIN}" ]] && break
+    echo "域名不能为空。"
   done
-}
 
-ask_xui_auth_optional() {
-  hr
-  echo "【设置】3x-ui 面板账号"
-  hr
-  local tries=0
-  while (( tries < 3 )); do
-    tries=$((tries + 1))
-    read -rp "设置 3x-ui 用户名 (空跳过) [${tries}/3]: " XUI_USER
-    XUI_USER="$(echo "${XUI_USER}" | tr -d ' ')"
-    
-    if [[ -z "${XUI_USER}" ]]; then
-      echo "使用默认账号 (admin/admin)。"
-      XUI_USER="admin"
-      XUI_PASS="admin"
-      return 0
-    fi
+  # 3. 3x-ui 端口 (默认 61999)
+  echo "------------------------------------------------"
+  echo "提示：建议使用高位端口，避免被扫描。"
+  read -rp "设置 3x-ui 端口 (回车默认 61999): " input_port
+  XUI_PORT="${input_port:-61999}"
+  # 校验是否为纯数字
+  if ! [[ "$XUI_PORT" =~ ^[0-9]+$ ]]; then
+    echo "警告：端口必须是数字，已重置为 61999"
+    XUI_PORT="61999"
+  fi
 
-    read -rp "设置 3x-ui 密码 (必填): " XUI_PASS
-    XUI_PASS="$(echo "${XUI_PASS}" | tr -d ' ')"
-    if [[ -n "${XUI_PASS}" ]]; then return 0; fi
-  done
-  XUI_USER="admin"
-  XUI_PASS="admin"
-}
+  # 4. 3x-ui 根路径 (默认 /Macbook)
+  echo "------------------------------------------------"
+  echo "提示：设置隐蔽路径可增加安全性 (黑客猜不到)。"
+  echo "默认路径设置为: /Macbook"
+  read -rp "设置 3x-ui 根路径 (回车默认为 /Macbook): " input_path
+  XUI_PATH="${input_path:-/Macbook}"
+  
+  # 智能修正：确保路径以 / 开头
+  [[ "${XUI_PATH}" != /* ]] && XUI_PATH="/${XUI_PATH}"
+  # 去除可能多余的末尾斜杠
+  XUI_PATH="${XUI_PATH%/}"
 
-ask_naive_auth_required() {
-  if [[ "${MODE}" != "B" ]]; then return 0; fi
-  hr
-  echo "【设置】NaiveProxy 代理账号"
-  hr
-  while true; do
-    read -rp "设置 Naive 用户名: " NAIVE_USER
-    NAIVE_USER="$(echo "${NAIVE_USER}" | tr -d ' ')"
-    [[ -n "${NAIVE_USER}" ]] && break
-  done
-  while true; do
-    read -rp "设置 Naive 密码: " NAIVE_PASS
-    NAIVE_PASS="$(echo "${NAIVE_PASS}" | tr -d ' ')"
-    [[ -n "${NAIVE_PASS}" ]] && break
-  done
+  # 5. 3x-ui 账号密码
+  echo "------------------------------------------------"
+  read -rp "设置 3x-ui 用户名 (默认 admin): " input_user
+  XUI_USER="${input_user:-admin}"
+  
+  read -rp "设置 3x-ui 密码 (默认 admin): " input_pass
+  XUI_PASS="${input_pass:-admin}"
+
+  # 6. Naive 账号 (仅 B 模式)
+  if [[ "${MODE}" == "B" ]]; then
+    echo "------------------------------------------------"
+    while true; do
+      read -rp "设置 Naive 代理用户名: " NAIVE_USER
+      [[ -n "${NAIVE_USER}" ]] && break
+    done
+    while true; do
+      read -rp "设置 Naive 代理密码: " NAIVE_PASS
+      [[ -n "${NAIVE_PASS}" ]] && break
+    done
+  fi
 }
 
 # -----------------------------
-# 2. System & Install
+# 3. 系统优化 (BBR)
 # -----------------------------
 enable_bbr() {
   log "Enabling BBR..."
@@ -118,24 +113,27 @@ enable_bbr() {
   sysctl -p >/dev/null 2>&1 || true
 }
 
-install_base_deps() {
-  log "Updating apt..."
+# -----------------------------
+# 4. 软件安装 (3x-ui, Caddy, Go, Naive)
+# -----------------------------
+install_base() {
+  log "Updating system..."
   apt update -y
   apt install -y curl wget socat vim git
 }
 
-install_3xui_default() {
+install_xui() {
   if command -v x-ui >/dev/null 2>&1; then
     log "3x-ui already installed."
-    return 0
+  else
+    log "Installing 3x-ui..."
+    local tmp="/tmp/3xui_install.sh"
+    curl -fsSL "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "${tmp}"
+    chmod +x "${tmp}"
+    # 静默安装
+    ( yes "" | timeout 1800 bash "${tmp}" ) || true
+    rm -f "${tmp}"
   fi
-  log "Installing 3x-ui..."
-  local tmp="/tmp/3xui_install.sh"
-  curl -fsSL "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "${tmp}"
-  chmod +x "${tmp}"
-  # 自动回车，接受官方的所有默认值（包括随机端口）
-  ( yes "" | timeout 1800 bash "${tmp}" ) || true
-  rm -f "${tmp}"
 }
 
 install_caddy_official() {
@@ -148,30 +146,25 @@ install_caddy_official() {
   apt install -y caddy
 }
 
-detect_arch() {
-  local m
-  m="$(uname -m)"
-  case "${m}" in
-    x86_64|amd64) ARCH="amd64" ;;
-    aarch64|arm64) ARCH="arm64" ;;
-    *) echo "Error: Arch ${m} not supported"; exit 1 ;;
-  esac
-}
-
-install_go_xcaddy_naive() {
+install_naive_core() {
   if [[ "${MODE}" != "B" ]]; then return 0; fi
-  detect_arch
   
-  local json
+  # 架构检测
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) echo "Unsupported arch"; exit 1 ;;
+  esac
+
+  # 下载 Go
+  local json url
   json="$(curl -fsSL "https://go.dev/dl/?mode=json" || true)"
-  GO_VER_PRIMARY="$(echo "${json}" | grep -oE '"version":"go[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4 || echo "go1.22.6")"
+  local ver="$(echo "${json}" | grep -oE '"version":"go[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4 || echo "go1.22.6")"
+  url="https://go.dev/dl/${ver}.linux-${arch}.tar.gz"
   
-  local url="https://go.dev/dl/${GO_VER_PRIMARY}.linux-${ARCH}.tar.gz"
-  log "Downloading Go: ${url}"
-  
-  if ! curl -fL --retry 3 -o "/tmp/go.tar.gz" "${url}"; then
-     err "Go download failed"; exit 1
-  fi
+  log "Downloading Go (${ver})..."
+  curl -fL --retry 3 -o "/tmp/go.tar.gz" "${url}" || { echo "Go download failed"; exit 1; }
 
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "/tmp/go.tar.gz"
@@ -182,11 +175,10 @@ install_go_xcaddy_naive() {
       echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
   fi
   
-  log "Installing xcaddy..."
+  log "Compiling Naive Caddy..."
   /usr/local/go/bin/go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
   export PATH="$PATH:$HOME/go/bin"
-
-  log "Building Naive Caddy..."
+  
   local bdir="/tmp/caddy-build"
   mkdir -p "${bdir}" && cd "${bdir}"
   "$HOME/go/bin/xcaddy" build --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
@@ -194,53 +186,45 @@ install_go_xcaddy_naive() {
   mv -f "${bdir}/caddy" /usr/bin/caddy
   chmod +x /usr/bin/caddy
   cd / && rm -rf "${bdir}"
-  log "Naive Caddy Installed."
 }
 
 # -----------------------------
-# 5. Configuration (Auto-Discovery Mode)
+# 5. 配置生效 (强制修改 + 暴力重启)
 # -----------------------------
-configure_xui_autodetect() {
-  # 1. 仅修改账号密码 (如果用户设置了)
-  # 端口和路径保持默认（即随机生成的）
-  if [[ "${XUI_USER}" != "admin" || "${XUI_PASS}" != "admin" ]]; then
-      log "Updating 3x-ui credentials..."
-      /usr/local/x-ui/x-ui setting -username "${XUI_USER}" -password "${XUI_PASS}" >/dev/null 2>&1 || true
-      /usr/local/x-ui/x-ui restart >/dev/null 2>&1 || true
-      sleep 3
-  fi
-
-  # 2. 核心：自动发现端口 (Auto-Discovery)
-  log "Detecting 3x-ui port..."
+configure_xui_force() {
+  hr
+  log "Applying settings to 3x-ui..."
+  hr
   
-  # 获取设置输出
-  local raw_output
-  raw_output="$(/usr/local/x-ui/x-ui settings 2>/dev/null)"
+  # 1. 强制写入所有配置 (含账号、密码、端口、路径)
+  # 使用官方 CLI 命令
+  /usr/local/x-ui/x-ui setting \
+    -username "${XUI_USER}" \
+    -password "${XUI_PASS}" \
+    -port "${XUI_PORT}" \
+    -webBasePath "${XUI_PATH}" >/dev/null 2>&1 || true
   
-  # 使用强力正则抓取端口 (忽略颜色代码)
-  REAL_PORT=$(echo "${raw_output}" | grep -i "port" | grep -oE '[0-9]+' | head -n1)
-  
-  # 抓取路径
-  REAL_PATH=$(echo "${raw_output}" | grep -i "web_base_path" | awk '{print $NF}' | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
-  
-  # 保底 (万一万一抓取失败，回退到默认值)
-  if [[ -z "${REAL_PORT}" ]]; then REAL_PORT=2053; fi
-  if [[ -z "${REAL_PATH}" ]]; then REAL_PATH="/"; fi
-  
-  log "Detected Port: ${REAL_PORT}, Path: ${REAL_PATH}"
+  # 2. 暴力重启 (杀进程以确保端口立即释放，这步很关键)
+  log "Restarting x-ui (Force Mode)..."
+  pkill -9 x-ui || true
+  sleep 2
+  systemctl restart x-ui
+  sleep 3
 }
 
 write_caddyfile() {
   log "Writing Caddyfile..."
   mkdir -p /etc/caddy
   
-  # 使用刚才自动侦测到的 REAL_PORT
+  # Caddy 只负责把流量转给 127.0.0.1:端口
+  # 具体路径 (/Macbook) 由 x-ui 内部处理
+  
   if [[ "${MODE}" == "A" ]]; then
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
     root * /usr/share/caddy
     file_server
-    reverse_proxy localhost:${REAL_PORT}
+    reverse_proxy localhost:${XUI_PORT}
 }
 EOF
   else
@@ -253,15 +237,17 @@ ${DOMAIN} {
             hide_via
             probe_resistance
         }
-        reverse_proxy localhost:${REAL_PORT}
+        reverse_proxy localhost:${XUI_PORT}
     }
 }
 EOF
   fi
 }
 
-create_info_command() {
-  # 写入配置文件
+# -----------------------------
+# 6. 生成打印命令 (所见即所得)
+# -----------------------------
+create_vps_command() {
   cat > /etc/vps-kit.conf <<EOF
 MODE="${MODE}"
 DOMAIN="${DOMAIN}"
@@ -269,8 +255,8 @@ XUI_USER="${XUI_USER}"
 XUI_PASS="${XUI_PASS}"
 NAIVE_USER="${NAIVE_USER}"
 NAIVE_PASS="${NAIVE_PASS}"
-REAL_PORT="${REAL_PORT}"
-REAL_PATH="${REAL_PATH}"
+XUI_PORT="${XUI_PORT}"
+XUI_PATH="${XUI_PATH}"
 EOF
 
   cat > /usr/bin/vps <<'EOF'
@@ -279,20 +265,23 @@ source /etc/vps-kit.conf 2>/dev/null || exit 1
 
 echo
 echo "###############################################"
-echo "3x-ui登录的用户名密码，妥善保管。"
+echo "3x-ui 用户配置清单"
 echo "Username:    ${XUI_USER}"
 echo "Password:    ${XUI_PASS}"
-echo "Port:        ${REAL_PORT} (Internal)"
-echo "WebBasePath: ${REAL_PATH}"
-echo "Access URL:  https://${DOMAIN}${REAL_PATH}"
+echo "Port:        ${XUI_PORT} (Internal)"
+echo "WebBasePath: ${XUI_PATH}"
+echo "-----------------------------------------------"
+echo "Access URL:  https://${DOMAIN}${XUI_PATH}"
+echo "(请妥善保存上方链接，否则无法访问面板)"
 echo "###############################################"
 
 if [[ "${MODE}" == "B" ]]; then
 echo
 echo "###############################################"
-echo "Naiveproxy用户名和密码，妥善保管"
+echo "Naiveproxy 配置"
 echo "Username: ${NAIVE_USER}"
 echo "Password: ${NAIVE_PASS}"
+echo "Probe:    https://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}"
 echo "###############################################"
 fi
 echo
@@ -301,40 +290,27 @@ EOF
 }
 
 # -----------------------------
-# Main Execution
+# 7. 主执行流程
 # -----------------------------
-ask_mode
-ask_domain_required
-ask_xui_auth_optional
-ask_naive_auth_required
-
+ask_inputs
 enable_bbr
 
-hr
-echo "[INSTALL] Installing..."
-hr
-
-install_base_deps
-install_3xui_default
+echo ">>> 开始安装 (可能需要几分钟)..."
+install_base
+install_xui
 install_caddy_official
-install_go_xcaddy_naive
+install_naive_core
 
-warn_box
-echo "[CONFIG 1/4] Detecting 3x-ui Config..."
-configure_xui_autodetect
-
-echo "[CONFIG 2/4] Writing Caddyfile..."
+echo ">>> 开始配置..."
+configure_xui_force
 write_caddyfile
+create_vps_command
 
-echo "[CONFIG 3/4] Creating 'vps' command..."
-create_info_command
-
-echo "[CONFIG 4/4] Restarting Caddy..."
+echo ">>> 重启服务..."
 setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
 systemctl enable caddy >/dev/null 2>&1
 systemctl restart caddy
 
-# Final Print
+# 打印最终结果
 /usr/bin/vps
-
-echo "Tip: Type 'vps' to show info."
+echo "安装完成！输入 'vps' 可随时查看配置信息。"
