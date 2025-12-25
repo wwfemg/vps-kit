@@ -54,6 +54,28 @@ if [[ "$INSTALL_MODE" == "stage2" ]]; then
 fi
 
 # --------------------------------------------------
+# TLS certificate info (Caddy)
+# --------------------------------------------------
+echo "🔐 TLS 证书位置 / TLS Certificate (Caddy Auto-Generated)"
+echo "  证书根目录 / Certificate Root:"
+echo "    /var/lib/caddy/.local/share/caddy/certificates/"
+echo
+echo "  当前域名证书路径 / Domain Certificate Path:"
+echo "    /var/lib/caddy/.local/share/caddy/certificates/"
+echo "      acme-v02.api.letsencrypt.org-directory/"
+echo "      ${INSTALL_DOMAIN}/"
+echo
+echo "  常用文件 / Common Files:"
+echo "    fullchain.pem   (证书链 / certificate chain)"
+echo "    private.key     (私钥 / private key)"
+echo
+echo "  ⚠️ 说明 / Note:"
+echo "    证书由 Caddy 在首次成功 HTTPS 访问域名后自动生成。"
+echo "    如目录暂不存在，请先访问一次："
+echo "    https://${INSTALL_DOMAIN}"
+echo
+
+# --------------------------------------------------
 # Helpful commands
 # --------------------------------------------------
 echo "🔧 常用命令 / Useful Commands"
