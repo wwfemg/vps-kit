@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ==================================================
+# Load modules
+# ==================================================
+
 # load go / xcaddy module
 source scripts/lib/40-go-xcaddy.sh
 
@@ -14,23 +18,29 @@ source scripts/lib/20-3xui.sh
 source scripts/lib/10-input.sh
 
 
-# === mandatory inputs (ask once) ===
+# ==================================================
+# 1) Collect user inputs (store only, NO changes)
+# ==================================================
 ask_domain
 ask_install_mode
 ask_naive_auth
 ask_xui_auth
 
 
-# configure 3x-ui admin account (auto)
+# ==================================================
+# 2) Install phase (NO configuration)
+# ==================================================
+install_3xui
+run_caddy
+
+
+# ==================================================
+# 3) Configure phase (AFTER all installs)
+# ==================================================
 configure_3xui_account
 
 
 # ==================================================
-# start caddy (with naive proxy if enabled)
-run_caddy
-# Entry point for VPS 3x-ui + Caddy (+ NaiveProxy)
+# 4) Final Output
 # ==================================================
-
-
-# ===== Final Output =====
 source scripts/lib/90-output.sh
