@@ -2,45 +2,72 @@
 set -euo pipefail
 
 # ==================================================
-# Load modules
+# Load modules (ONLY functions, no logic here)
 # ==================================================
 
-# load go / xcaddy module
+source scripts/lib/10-input.sh
+source scripts/lib/20-3xui.sh
+source scripts/lib/30-caddy.sh
 source scripts/lib/40-go-xcaddy.sh
 
-# load caddy module
-source scripts/lib/30-caddy.sh
-
-# load 3x-ui module
-source scripts/lib/20-3xui.sh
-
-# load mandatory input module
-source scripts/lib/10-input.sh
-
-
 # ==================================================
-# 1) Collect user inputs (store only, NO changes)
+# 1) Collect user inputs (STORE ONLY)
 # ==================================================
 ask_domain
 ask_install_mode
 ask_naive_auth
 ask_xui_auth
 
+# ==================================================
+# 2) Install phase (STRICTLY no custom config)
+# ==================================================
+echo
+echo "==============================================="
+echo "[INSTALL] Installing required software..."
+echo "==============================================="
 
-# ==================================================
-# 2) Install phase (NO configuration)
-# ==================================================
+# 2.1 install 3x-ui (non-interactive)
 install_3xui
-run_caddy
 
+# 2.2 install caddy (base service only)
+install_caddy
+
+# 2.3 stage2 only: install go / xcaddy / naive dependencies
+if [[ "$INSTALL_MODE" == "stage2" ]]; then
+  prepare_go_xcaddy
+  install_naiveproxy || true
+fi
 
 # ==================================================
-# 3) Configure phase (AFTER all installs)
+# 3) Configure phase (ALL custom config happens HERE)
 # ==================================================
+echo
+echo "==============================================="
+echo "[CONFIG] Configuring services, please wait..."
+echo "==============================================="
+
+# 3.1 configure 3x-ui panel account (BOTH stage1 & stage2)
+echo "[CONFIG] (1/3) Configuring 3x-ui panel..."
 configure_3xui_account
 
+# 3.2 configure caddy
+# - stage1: configure stage1 caddy
+# - stage2: SKIP stage1 config, directly configure stage2
+if [[ "$INSTALL_MODE" == "stage1" ]]; then
+  echo "[CONFIG] (2/3) Generating Caddy config (stage1)..."
+  configure_caddy_stage1
+fi
+
+if [[ "$INSTALL_MODE" == "stage2" ]]; then
+  echo "[CONFIG] (2/3) Generating Caddy config (stage2 / NaiveProxy)..."
+  configure_caddy_stage2
+fi
+
+# 3.3 reload services (ONCE, after final config)
+echo "[CONFIG] (3/3) Reloading services..."
+reload_caddy
 
 # ==================================================
-# 4) Final Output
+# 4) Final output (ONLY after everything is done)
 # ==================================================
 source scripts/lib/90-output.sh
