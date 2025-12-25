@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ==========================================================
-# VPS-KIT V9.5 (Debian Only) - 止血稳健版 (Stable)
-# 1. 策略调整：删除所有[配置回读]逻辑，防止 grep 导致脚本中断
-# 2. 核心保障：确保 install -> config -> print 流程 100% 跑通
-# 3. 功能保留：红字交互、密码隐形、localhost配置、暴力重启
+# VPS-KIT V9.8 (Debian Only) - 动态补全版
+# 1. 逻辑优化：安装完立刻结束，绝不等待证书生成
+# 2. 信息展示：[永久显示路径] + [动态显示内容]
+# 3. 交互体验：红字交互 + 隐形密码 + 经典文案
 # ==========================================================
 
 # -----------------------------
@@ -131,7 +131,7 @@ enable_bbr() {
 }
 
 # -----------------------------
-# 4. 软件安装 (依赖补全 + 失败退出的保护机制)
+# 4. 软件安装 (依赖补全 + 失败保护)
 # -----------------------------
 install_base() {
   log "Updating system..."
@@ -153,7 +153,7 @@ install_xui() {
     rm -f "${tmp}"
   fi
   
-  # 核心保护：如果没装上，立刻报错退出，不往后跑
+  # 核心保护：如果没装上，立刻报错退出
   if ! command -v x-ui >/dev/null 2>&1; then
     err "[FATAL] 3x-ui install failed or not found! Aborting."
     exit 1
@@ -211,7 +211,7 @@ install_naive_core() {
 }
 
 # -----------------------------
-# 5. 配置生效 (⚠️ 删除了所有回读逻辑，确保不中断)
+# 5. 配置生效 (稳健版)
 # -----------------------------
 configure_xui_force() {
   hr
@@ -229,17 +229,12 @@ configure_xui_force() {
   log "Restarting x-ui..."
   systemctl restart x-ui
   sleep 3
-
-  # ❌ 已删除所有 grep/read-back 逻辑
-  # ✅ 直接信任 ask_inputs 阶段的变量
-  log "Configuration applied."
 }
 
 write_caddyfile() {
   log "Writing Caddyfile..."
   mkdir -p /etc/caddy
   
-  # 保持 localhost，不做任何改动
   if [[ "${MODE}" == "A" ]]; then
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
@@ -266,7 +261,7 @@ EOF
 }
 
 # -----------------------------
-# 6. 生成打印命令 (严格复刻您的文案)
+# 6. 生成打印命令 (路径+动态内容)
 # -----------------------------
 create_vps_command() {
   cat > /etc/vps-kit.conf <<EOF
@@ -284,21 +279,40 @@ EOF
 #!/bin/bash
 source /etc/vps-kit.conf 2>/dev/null || exit 1
 
+# Caddy 证书绝对路径
+CERT_DIR="/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${DOMAIN}"
+CRT_FILE="${CERT_DIR}/${DOMAIN}.crt"
+KEY_FILE="${CERT_DIR}/${DOMAIN}.key"
+
 echo
 echo "###############################################"
-# 复刻经典文案：警示 + 登录
 echo "3x-ui登录的用户名密码，妥善保管。"
 echo "Username:    ${XUI_USER}"
 echo "Password:    ${XUI_PASS}"
 echo "Port:        ${XUI_PORT} (Internal)"
 echo "WebBasePath: ${XUI_PATH}"
 echo "Access URL:  https://${DOMAIN}${XUI_PATH}"
+echo "-----------------------------------------------"
+echo "Caddy 证书路径 (文件位置):"
+echo "公钥: ${CRT_FILE}"
+echo "私钥: ${KEY_FILE}"
+echo "-----------------------------------------------"
+if [ -f "$CRT_FILE" ] && [ -f "$KEY_FILE" ]; then
+    echo ">>> 证书内容已生成 (可直接复制) <<<"
+    echo "--- Public Key (CRT) ---"
+    cat "$CRT_FILE"
+    echo "--- Private Key (KEY) ---"
+    cat "$KEY_FILE"
+else
+    echo ">>> 证书状态: 申请中 (Pending) <<<"
+    echo "提示: Caddy 正在后台申请证书，请等待约 1 分钟。"
+    echo "再次输入 'vps' 命令，即可看到证书内容。"
+fi
 echo "###############################################"
 
 if [[ "${MODE}" == "B" ]]; then
 echo
 echo "###############################################"
-# 复刻经典文案：追加内容
 echo "Naiveproxy用户名和密码，妥善保管"
 echo "Username: ${NAIVE_USER}"
 echo "Password: ${NAIVE_PASS}"
