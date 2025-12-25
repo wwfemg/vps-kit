@@ -22,6 +22,10 @@ ask_naive_auth
 # load 3x-ui runtime info
 load_3xui_info
 
+# configure 3x-ui admin account (auto)
+configure_3xui_account
+
+
 
 # ==================================================
 # start caddy (with naive proxy if enabled)

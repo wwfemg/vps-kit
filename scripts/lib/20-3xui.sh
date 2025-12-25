@@ -2,36 +2,33 @@
 set -euo pipefail
 
 # ==================================================
-# 3x-ui runtime information (read-only)
+# 3x-ui automatic account configuration
+# Uses printf | x-ui (NO heredoc interaction)
 # ==================================================
 
-XUI_DB="/etc/x-ui/x-ui.db"
-
-require_xui_db() {
-  if [[ ! -f "$XUI_DB" ]]; then
-    echo "ERROR: x-ui database not found at $XUI_DB"
-    exit 1
-  fi
-}
-
-load_3xui_info() {
-  require_xui_db
-  XUI_PORT="$(sqlite3 "$XUI_DB" "select value from settings where key='webPort';")"
-  XUI_BASE_PATH="$(sqlite3 "$XUI_DB" "select value from settings where key='webBasePath';")"
-
-  if [[ -z "${XUI_PORT:-}" || -z "${XUI_BASE_PATH:-}" ]]; then
-    echo "ERROR: Failed to read 3x-ui port or web base path"
+configure_3xui_account() {
+  if [[ -z "${XUI_USER:-}" || -z "${XUI_PASS:-}" ]]; then
+    echo "[ERROR] XUI_USER / XUI_PASS not set"
     exit 1
   fi
 
-  export XUI_PORT
-  export XUI_BASE_PATH
+  echo "[INFO] Configuring 3x-ui panel account..."
+
+  # Sequence validated on VPS:
+  #  - initial Enter
+  #  - menu 6
+  #  - y (confirm)
+  #  - username
+  #  - password
+  #  - y (apply & restart)
+  #  - Enter (return)
+  #  - 0, 0 (exit)
+  printf "\n6\ny\n%s\n%s\ny\n\n0\n0\n" "$XUI_USER" "$XUI_PASS" | x-ui
+
+  echo "[INFO] 3x-ui account configured and panel restarted."
 }
 
-get_3xui_port() {
-  echo "$XUI_PORT"
-}
-
-get_3xui_web_base_path() {
-  echo "$XUI_BASE_PATH"
-}
+# allow direct execution for testing
+if [[ "${1:-}" == "run" ]]; then
+  configure_3xui_account
+fi
