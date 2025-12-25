@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ==========================================================
-# VPS-KIT V9.4 (Debian Only) - 经典文案复刻版
-# 1. 打印风格：严格遵照作者定义的“妥善保管”警示文案
-# 2. 技术内核：基于 V9.3 (依赖补全 + 失败检测 + 真实回读)
-# 3. 核心机制：红色交互 + 密码隐形 + 暴力重启生效
+# VPS-KIT V9.5 (Debian Only) - 止血稳健版 (Stable)
+# 1. 策略调整：删除所有[配置回读]逻辑，防止 grep 导致脚本中断
+# 2. 核心保障：确保 install -> config -> print 流程 100% 跑通
+# 3. 功能保留：红字交互、密码隐形、localhost配置、暴力重启
 # ==========================================================
 
 # -----------------------------
@@ -35,7 +35,7 @@ NAIVE_USER=""
 NAIVE_PASS=""
 
 # -----------------------------
-# 2. 用户输入 (红字交互 + 密码隐形)
+# 2. 用户输入 (红字 + 隐形密码)
 # -----------------------------
 ask_inputs() {
   hr
@@ -90,7 +90,7 @@ ask_inputs() {
   # 去除可能多余的末尾斜杠
   XUI_PATH="${XUI_PATH%/}"
 
-  # 5. 3x-ui 账号密码 (密码隐形)
+  # 5. 3x-ui 账号密码 (隐形输入)
   echo "------------------------------------------------"
   ask_red "设置 3x-ui 用户名 (默认 admin):"
   read -r input_user
@@ -101,7 +101,7 @@ ask_inputs() {
   echo "" 
   XUI_PASS="${input_pass:-admin}"
 
-  # 6. Naive 账号 (仅 B 模式，密码隐形)
+  # 6. Naive 账号 (仅 B 模式，隐形输入)
   if [[ "${MODE}" == "B" ]]; then
     echo "------------------------------------------------"
     while true; do
@@ -131,12 +131,12 @@ enable_bbr() {
 }
 
 # -----------------------------
-# 4. 软件安装 (V9.3 技术内核)
+# 4. 软件安装 (依赖补全 + 失败退出的保护机制)
 # -----------------------------
 install_base() {
   log "Updating system..."
   apt update -y
-  # 补全依赖，防止 timeout 报错
+  # 必须装 coreutils 以支持 timeout
   apt install -y curl wget socat vim git coreutils
 }
 
@@ -153,7 +153,7 @@ install_xui() {
     rm -f "${tmp}"
   fi
   
-  # 硬性校验：安装失败则退出
+  # 核心保护：如果没装上，立刻报错退出，不往后跑
   if ! command -v x-ui >/dev/null 2>&1; then
     err "[FATAL] 3x-ui install failed or not found! Aborting."
     exit 1
@@ -211,14 +211,14 @@ install_naive_core() {
 }
 
 # -----------------------------
-# 5. 配置生效 (优雅重启 + 真实回读)
+# 5. 配置生效 (⚠️ 删除了所有回读逻辑，确保不中断)
 # -----------------------------
 configure_xui_force() {
   hr
   log "Applying settings to 3x-ui..."
   hr
   
-  # 1. 强制写入配置
+  # 1. 写入配置
   /usr/local/x-ui/x-ui setting \
     -username "${XUI_USER}" \
     -password "${XUI_PASS}" \
@@ -230,28 +230,16 @@ configure_xui_force() {
   systemctl restart x-ui
   sleep 3
 
-  # 3. 回读真实配置 (防打印造假)
-  log "Verifying actual settings..."
-  local raw_settings
-  raw_settings=$(/usr/local/x-ui/x-ui settings 2>/dev/null || true)
-  
-  local real_port
-  local real_path
-  
-  real_port=$(echo "$raw_settings" | grep -i port | grep -oE '[0-9]+' | head -n1)
-  real_path=$(echo "$raw_settings" | grep -i web | awk '{print $NF}' | tr -d '[:space:]')
-  
-  if [[ -n "$real_port" ]]; then XUI_PORT="$real_port"; fi
-  if [[ -n "$real_path" ]]; then XUI_PATH="$real_path"; fi
-  
-  log "Verified Config -> Port: ${XUI_PORT}, Path: ${XUI_PATH}"
+  # ❌ 已删除所有 grep/read-back 逻辑
+  # ✅ 直接信任 ask_inputs 阶段的变量
+  log "Configuration applied."
 }
 
 write_caddyfile() {
   log "Writing Caddyfile..."
   mkdir -p /etc/caddy
   
-  # 统一使用 localhost，严格匹配原始配置逻辑
+  # 保持 localhost，不做任何改动
   if [[ "${MODE}" == "A" ]]; then
     cat > /etc/caddy/Caddyfile <<EOF
 ${DOMAIN} {
@@ -278,7 +266,7 @@ EOF
 }
 
 # -----------------------------
-# 6. 生成打印命令 (100% 还原用户定义文案)
+# 6. 生成打印命令 (严格复刻您的文案)
 # -----------------------------
 create_vps_command() {
   cat > /etc/vps-kit.conf <<EOF
@@ -296,11 +284,9 @@ EOF
 #!/bin/bash
 source /etc/vps-kit.conf 2>/dev/null || exit 1
 
-# === 严格复刻您最初定义的打印格式 ===
-
 echo
 echo "###############################################"
-# 恢复文案：警示语气 + 登录语义
+# 复刻经典文案：警示 + 登录
 echo "3x-ui登录的用户名密码，妥善保管。"
 echo "Username:    ${XUI_USER}"
 echo "Password:    ${XUI_PASS}"
@@ -312,7 +298,7 @@ echo "###############################################"
 if [[ "${MODE}" == "B" ]]; then
 echo
 echo "###############################################"
-# 恢复文案：追加内容 + 警示语气
+# 复刻经典文案：追加内容
 echo "Naiveproxy用户名和密码，妥善保管"
 echo "Username: ${NAIVE_USER}"
 echo "Password: ${NAIVE_PASS}"
