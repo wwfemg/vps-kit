@@ -182,7 +182,7 @@ install_naive_core() {
 
   local json url
   json="$(curl -fsSL "https://go.dev/dl/?mode=json" || true)"
-  local ver="$(echo "${json}" | grep -oE '"version":"go[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4 || echo "go1.22.6")"
+  local ver="$(echo "${json}" | grep -oE '"version":"go[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4 || echo "go1.25.6")"
   url="https://go.dev/dl/${ver}.linux-${arch}.tar.gz"
   
   log "Downloading Go (${ver})..."
