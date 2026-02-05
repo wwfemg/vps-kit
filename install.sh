@@ -229,6 +229,12 @@ configure_xui_force() {
   log "Restarting x-ui..."
   systemctl restart x-ui
   sleep 3
+  
+  # 3. 删除面板证书（让 Caddy 反向代理生效）
+  log "Removing panel SSL certificate for Caddy reverse proxy..."
+  /usr/local/x-ui/x-ui cert -webCert "" -webCertKey "" >/dev/null 2>&1 || true
+  systemctl restart x-ui
+  sleep 2
 }
 
 write_caddyfile() {
