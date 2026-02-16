@@ -2,10 +2,9 @@
 set -euo pipefail
 
 # ==========================================================
-# VPS-KIT V9.9 (Debian Only) - 最终清爽版 (Clean Path Only)
-# 1. 界面极致清爽：严格按照您的截图，只打印 [路径]，绝不打印 [乱码内容]
-# 2. 核心稳健：保留 V9.8 的防崩坏逻辑，100% 跑通
-# 3. 交互体验：红字交互 + 隐形密码 + 经典文案
+# VPS-KIT V10.0 (Debian Only) - 稳定版
+# 修复: Go 锁定 1.24.1 / Caddy 锁定 v2.9.1 (解决 NaiveProxy TLS bug)
+# 优化: 模式 A/B 分流安装，避免重复安装 Caddy
 # ==========================================================
 
 # -----------------------------
@@ -172,41 +171,45 @@ install_caddy_official() {
 
 install_naive_core() {
   if [[ "${MODE}" != "B" ]]; then return 0; fi
-  
+
   local arch
   case "$(uname -m)" in
     x86_64|amd64) arch="amd64" ;;
     aarch64|arm64) arch="arm64" ;;
-    *) echo "Unsupported arch"; exit 1 ;;
+    *) err "Unsupported arch: $(uname -m)"; exit 1 ;;
   esac
 
-  local json url
-  json="$(curl -fsSL "https://go.dev/dl/?mode=json" || true)"
-  local ver="$(echo "${json}" | grep -oE '"version":"go[0-9]+\.[0-9]+\.[0-9]+"' | head -n1 | cut -d'"' -f4 || echo "go1.25.6")"
-  url="https://go.dev/dl/${ver}.linux-${arch}.tar.gz"
-  
-  log "Downloading Go (${ver})..."
-  curl -fL --retry 3 -o "/tmp/go.tar.gz" "${url}" || { echo "Go download failed"; exit 1; }
+  # 锁定 Go 1.24.1（已验证兼容 forwardproxy naive）
+  # 注意：Go 1.25.x 编译的 forwardproxy 隧道转发有 TLS bug，不要升级
+  local GO_VER="1.24.1"
+  local url="https://go.dev/dl/go${GO_VER}.linux-${arch}.tar.gz"
+
+  log "Downloading Go ${GO_VER}..."
+  curl -fL --retry 3 -o /tmp/go.tar.gz "${url}" || { err "Go download failed"; exit 1; }
 
   rm -rf /usr/local/go
-  tar -C /usr/local -xzf "/tmp/go.tar.gz"
-  rm -f "/tmp/go.tar.gz"
-  export PATH="$PATH:/usr/local/go/bin"
-  
+  tar -C /usr/local -xzf /tmp/go.tar.gz
+  rm -f /tmp/go.tar.gz
+  export PATH="/usr/local/go/bin:$PATH"
+
   if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
-      echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
   fi
-  
-  log "Compiling Naive Caddy..."
+
+  log "Compiling Caddy v2.9.1 with NaiveProxy..."
   /usr/local/go/bin/go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-  export PATH="$PATH:$HOME/go/bin"
-  
+  export PATH="$HOME/go/bin:$PATH"
+
   local bdir="/tmp/caddy-build"
   mkdir -p "${bdir}" && cd "${bdir}"
-  "$HOME/go/bin/xcaddy" build --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
-  
+
+  # 锁定 Caddy v2.9.1（已验证兼容 forwardproxy naive + Go 1.24.1）
+  "$HOME/go/bin/xcaddy" build v2.9.1 \
+    --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+
   mv -f "${bdir}/caddy" /usr/bin/caddy
   chmod +x /usr/bin/caddy
+  setcap cap_net_bind_service=+ep /usr/bin/caddy
   cd / && rm -rf "${bdir}"
 }
 
@@ -231,10 +234,12 @@ configure_xui_force() {
   sleep 3
   
   # 3. 删除面板证书（让 Caddy 反向代理生效）
-  log "Removing panel SSL certificate for Caddy reverse proxy..."
-  /usr/local/x-ui/x-ui cert -webCert "" -webCertKey "" >/dev/null 2>&1 || true
-  systemctl restart x-ui
-  sleep 2
+  if /usr/local/x-ui/x-ui cert --help >/dev/null 2>&1; then
+    log "Removing panel SSL certificate for Caddy reverse proxy..."
+    /usr/local/x-ui/x-ui cert -webCert "" -webCertKey "" >/dev/null 2>&1 || true
+    systemctl restart x-ui
+    sleep 2
+  fi
 }
 
 write_caddyfile() {
@@ -327,8 +332,11 @@ enable_bbr
 echo ">>> 开始安装 (可能需要几分钟)..."
 install_base
 install_xui
-install_caddy_official
-install_naive_core
+if [[ "${MODE}" == "A" ]]; then
+  install_caddy_official
+else
+  install_naive_core
+fi
 
 echo ">>> 开始配置..."
 configure_xui_force
@@ -337,8 +345,9 @@ create_vps_command
 
 echo ">>> 重启服务..."
 setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
+systemctl stop caddy 2>/dev/null || true
 systemctl enable caddy >/dev/null 2>&1
-systemctl restart caddy
+systemctl start caddy
 
 # 打印最终结果
 /usr/bin/vps
