@@ -122,6 +122,7 @@ ask_inputs() {
 # -----------------------------
 enable_bbr() {
   log "Enabling BBR..."
+  touch /etc/sysctl.conf
   sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
   sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
   echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
