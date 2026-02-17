@@ -136,28 +136,89 @@ enable_bbr() {
 install_base() {
   log "Updating system..."
   apt update -y
-  # 必须装 coreutils 以支持 timeout
   apt install -y curl wget socat vim git coreutils
+
+  # 清除防火墙规则（Oracle Cloud 等默认有 iptables/nftables 限制）
+  log "Clearing firewall rules..."
+  if command -v nft >/dev/null 2>&1; then
+    nft flush ruleset 2>/dev/null || true
+  fi
+  iptables -F 2>/dev/null || true
+  iptables -X 2>/dev/null || true
+  iptables -P INPUT ACCEPT 2>/dev/null || true
+  iptables -P FORWARD ACCEPT 2>/dev/null || true
+  iptables -P OUTPUT ACCEPT 2>/dev/null || true
 }
 
 install_xui() {
   if command -v x-ui >/dev/null 2>&1; then
     log "3x-ui already installed."
-  else
-    log "Installing 3x-ui..."
-    local tmp="/tmp/3xui_install.sh"
-    curl -fsSL "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "${tmp}"
-    chmod +x "${tmp}"
-    # 静默安装
-    ( yes "" | timeout 1800 bash "${tmp}" ) || true
-    rm -f "${tmp}"
+    return 0
   fi
-  
-  # 核心保护：如果没装上，立刻报错退出
+
+  log "Installing 3x-ui (manual mode, skip SSL prompt)..."
+
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    armv7l)       arch="armv7" ;;
+    *) err "Unsupported arch for 3x-ui: $(uname -m)"; exit 1 ;;
+  esac
+
+  # 获取最新版本号
+  local tag
+  tag=$(curl -fsSL "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+  [[ -z "${tag}" ]] && { err "Failed to get 3x-ui version"; exit 1; }
+  log "3x-ui version: ${tag}"
+
+  # 下载并解压
+  local url="https://github.com/MHSanaei/3x-ui/releases/download/${tag}/x-ui-linux-${arch}.tar.gz"
+  curl -fL --retry 3 -o /tmp/x-ui.tar.gz "${url}" || { err "Download 3x-ui failed"; exit 1; }
+  rm -rf /usr/local/x-ui
+  tar -C /usr/local -xzf /tmp/x-ui.tar.gz
+  rm -f /tmp/x-ui.tar.gz
+
+  chmod +x /usr/local/x-ui/x-ui
+  chmod +x /usr/local/x-ui/bin/xray-linux-${arch}
+
+  # 下载 CLI 脚本
+  curl -fsSL "https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh" -o /usr/bin/x-ui
+  chmod +x /usr/bin/x-ui
+
+  # 创建 systemd service
+  cat > /etc/systemd/system/x-ui.service <<'UNIT'
+[Unit]
+Description=x-ui Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/x-ui/
+ExecStart=/usr/local/x-ui/x-ui
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+LimitNPROC=512
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  # 数据库迁移
+  /usr/local/x-ui/x-ui migrate >/dev/null 2>&1 || true
+
+  systemctl daemon-reload
+  systemctl enable x-ui >/dev/null 2>&1
+  systemctl start x-ui
+  sleep 2
+
   if ! command -v x-ui >/dev/null 2>&1; then
-    err "[FATAL] 3x-ui install failed or not found! Aborting."
+    err "[FATAL] 3x-ui install failed!"
     exit 1
   fi
+  log "3x-ui installed successfully (no SSL, will use Caddy reverse proxy)."
 }
 
 install_caddy_official() {
@@ -360,23 +421,29 @@ enable_bbr
 
 echo ">>> 开始安装 (可能需要几分钟)..."
 install_base
-install_xui
+
 if [[ "${MODE}" == "A" ]]; then
+  install_xui
   install_caddy_official
+  configure_xui_force
+  write_caddyfile
+  create_vps_command
+  systemctl enable caddy >/dev/null 2>&1
+  systemctl restart caddy
 else
+  # 模式 B：先装 Caddy + NaiveProxy，占住 80/443，再装 3x-ui
   install_naive_core
+  write_caddyfile
+  create_vps_command
+  setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
+  systemctl enable caddy >/dev/null 2>&1
+  systemctl start caddy
+  log "Caddy started, waiting for certificate..."
+  sleep 5
+  # Caddy 已占住 80/443，3x-ui 证书流程不会干扰
+  install_xui
+  configure_xui_force
 fi
-
-echo ">>> 开始配置..."
-configure_xui_force
-write_caddyfile
-create_vps_command
-
-echo ">>> 重启服务..."
-setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
-systemctl stop caddy 2>/dev/null || true
-systemctl enable caddy >/dev/null 2>&1
-systemctl start caddy
 
 # 打印最终结果
 /usr/bin/vps
