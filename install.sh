@@ -139,15 +139,16 @@ install_base() {
   apt install -y curl wget socat vim git coreutils
 
   # 清除防火墙规则（Oracle Cloud 等默认有 iptables/nftables 限制）
+  # 注意：必须先设 ACCEPT 策略再 flush，否则会断 SSH 连接
   log "Clearing firewall rules..."
-  if command -v nft >/dev/null 2>&1; then
-    nft flush ruleset 2>/dev/null || true
-  fi
-  iptables -F 2>/dev/null || true
-  iptables -X 2>/dev/null || true
   iptables -P INPUT ACCEPT 2>/dev/null || true
   iptables -P FORWARD ACCEPT 2>/dev/null || true
   iptables -P OUTPUT ACCEPT 2>/dev/null || true
+  iptables -F 2>/dev/null || true
+  iptables -X 2>/dev/null || true
+  if command -v nft >/dev/null 2>&1; then
+    nft flush ruleset 2>/dev/null || true
+  fi
 }
 
 install_xui() {
@@ -277,6 +278,7 @@ install_naive_core() {
   # 创建 caddy 用户和 systemd service（模式 B 不走 apt 安装，需要手动创建）
   id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy
   mkdir -p /var/lib/caddy /etc/caddy
+  chown -R caddy:caddy /var/lib/caddy
 
   cat > /etc/systemd/system/caddy.service <<'UNIT'
 [Unit]
@@ -346,7 +348,7 @@ ${DOMAIN} {
 EOF
   else
     cat > /etc/caddy/Caddyfile <<EOF
-${DOMAIN} {
+:443, ${DOMAIN} {
     route {
         forward_proxy {
             basic_auth ${NAIVE_USER} ${NAIVE_PASS}
