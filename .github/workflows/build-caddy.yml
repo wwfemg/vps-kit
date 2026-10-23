@@ -1,0 +1,177 @@
+name: Build Caddy (NaiveProxy)
+
+# 交叉编译带 forwardproxy 的 Caddy，产物发到 Release（tag: caddy-<naive tag>），
+# install.sh 装机时直接下载。下载或校验失败时它会回落到本机编译。
+
+on:
+  workflow_dispatch:
+    inputs:
+      naive_tag:
+        description: 'forwardproxy 配对 tag（留空=自动取最新，如 v2.11.7-naive）'
+        required: false
+        default: ''
+      caddy_ver:
+        description: 'Caddy 版本（留空=由 naive tag 名推出）'
+        required: false
+        default: ''
+      go_ver:
+        description: 'Go 版本（留空=最新稳定版）'
+        required: false
+        default: ''
+# 只手动触发，不设 schedule：版本不应在无人验证的情况下移动。
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 与 install.sh 的 resolve_build_versions 一致：tag 名决定 Caddy 版本，
+      # tag 指向的 commit SHA 决定 forwardproxy（tag 名不是合法的 Go 模块版本）。
+      - name: 解析版本
+        id: ver
+        run: |
+          set -euo pipefail
+
+          NAIVE_TAG='${{ inputs.naive_tag }}'
+          if [[ -z "${NAIVE_TAG}" ]]; then
+            NAIVE_TAG="$(curl -fsSL --max-time 30 \
+              https://api.github.com/repos/klzgrad/forwardproxy/tags \
+              | tr ',{}' '\n\n\n' \
+              | sed -nE 's/.*"name": *"(v[0-9]+\.[0-9]+\.[0-9]+-naive)".*/\1/p' \
+              | awk 'NR==1')"
+          fi
+          [[ -n "${NAIVE_TAG}" ]] || { echo "::error::取不到 forwardproxy 配对 tag"; exit 1; }
+
+          CADDY_VER='${{ inputs.caddy_ver }}'
+          [[ -n "${CADDY_VER}" ]] || CADDY_VER="${NAIVE_TAG%-naive}"
+
+          NAIVE_REF="$(curl -fsSL --max-time 30 \
+            "https://api.github.com/repos/klzgrad/forwardproxy/git/ref/tags/${NAIVE_TAG}" \
+            | tr ',{}' '\n\n\n' \
+            | sed -nE 's/.*"sha": *"([0-9a-f]{40})".*/\1/p' | awk 'NR==1')"
+          [[ -n "${NAIVE_REF}" ]] || { echo "::error::取不到 ${NAIVE_TAG} 的 commit"; exit 1; }
+
+          GO_VER='${{ inputs.go_ver }}'
+          if [[ -z "${GO_VER}" ]]; then
+            GO_VER="$(curl -fsSL --max-time 30 'https://go.dev/dl/?mode=json' \
+              | tr ',{}' '\n\n\n' \
+              | sed -nE 's/.*"version": *"go([0-9.]+)".*/\1/p' | awk 'NR==1')"
+          fi
+          [[ -n "${GO_VER}" ]] || { echo "::error::取不到 Go 版本"; exit 1; }
+
+          {
+            echo "naive_tag=${NAIVE_TAG}"
+            echo "naive_ref=${NAIVE_REF}"
+            echo "caddy_ver=${CADDY_VER}"
+            echo "go_ver=${GO_VER}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "### 版本组合" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Go \`${GO_VER}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Caddy \`${CADDY_VER}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- forwardproxy \`${NAIVE_TAG}\` (\`${NAIVE_REF:0:12}\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.ver.outputs.go_ver }}
+          cache: false
+
+      - name: 安装 xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+      - name: 交叉编译 amd64 / arm64
+        env:
+          CGO_ENABLED: '0'
+          CADDY_VER: ${{ steps.ver.outputs.caddy_ver }}
+          NAIVE_REF: ${{ steps.ver.outputs.naive_ref }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            echo "::group::build ${arch}"
+            GOOS=linux GOARCH="${arch}" "$(go env GOPATH)/bin/xcaddy" build "${CADDY_VER}" \
+              --with "github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@${NAIVE_REF}" \
+              --output "caddy-linux-${arch}"
+            echo "::endgroup::"
+          done
+          ls -l caddy-linux-*
+
+      # amd64 可直接运行验证插件；arm64 在 x86 runner 上只能验文件格式。
+      - name: 验证产物
+        run: |
+          set -euo pipefail
+          chmod +x caddy-linux-amd64
+          ./caddy-linux-amd64 list-modules | grep -q 'http.handlers.forward_proxy'
+          echo "amd64: forward_proxy 插件已验证 ✓"
+          file caddy-linux-arm64 | tee /dev/stderr | grep -q 'ARM aarch64'
+          echo "arm64: 文件格式正确（未做运行时验证）"
+
+      - name: 生成校验与构建信息
+        env:
+          NAIVE_TAG: ${{ steps.ver.outputs.naive_tag }}
+          NAIVE_REF: ${{ steps.ver.outputs.naive_ref }}
+          CADDY_VER: ${{ steps.ver.outputs.caddy_ver }}
+          GO_VER:    ${{ steps.ver.outputs.go_ver }}
+        run: |
+          set -euo pipefail
+          sha256sum caddy-linux-amd64 caddy-linux-arm64 > checksums.txt
+          cat > build-info.txt <<INFO
+          Go             : ${GO_VER}
+          Caddy          : ${CADDY_VER}
+          forwardproxy   : ${NAIVE_TAG}  (commit ${NAIVE_REF})
+          Built          : $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          Runner         : $(uname -srm)
+          Workflow run   : ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Commit         : ${GITHUB_SHA}
+
+          验证状态：
+            caddy-linux-amd64  已在 runner 上执行 list-modules，forward_proxy 插件确认存在
+            caddy-linux-arm64  仅验证了 ELF 格式为 ARM aarch64，未做运行时验证
+                               （x86 runner 跑不了 arm64 二进制，不挂 qemu 做不到）
+          INFO
+          sed -i 's/^          //' build-info.txt
+          cat build-info.txt
+          cat checksums.txt
+
+      - name: 附上游 LICENSE
+        env:
+          CADDY_VER: ${{ steps.ver.outputs.caddy_ver }}
+          NAIVE_REF: ${{ steps.ver.outputs.naive_ref }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 30 -o LICENSE-caddy \
+            "https://raw.githubusercontent.com/caddyserver/caddy/${CADDY_VER}/LICENSE"
+          curl -fsSL --max-time 30 -o LICENSE-forwardproxy \
+            "https://raw.githubusercontent.com/klzgrad/forwardproxy/${NAIVE_REF}/LICENSE"
+
+      # tag 不可变：同名 Release 已存在时 create 会失败，不覆盖。
+      - name: 发布到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: caddy-${{ steps.ver.outputs.naive_tag }}
+          NAIVE_TAG: ${{ steps.ver.outputs.naive_tag }}
+          CADDY_VER: ${{ steps.ver.outputs.caddy_ver }}
+          GO_VER:    ${{ steps.ver.outputs.go_ver }}
+        run: |
+          set -euo pipefail
+          gh release create "${RELEASE_TAG}" \
+            --title "Caddy ${CADDY_VER} + NaiveProxy (${NAIVE_TAG})" \
+            --notes "install.sh 从这里下载预编译的 Caddy，省掉在中转机上编译。
+
+          | 项目 | 值 |
+          |---|---|
+          | Go | \`${GO_VER}\` |
+          | Caddy | \`${CADDY_VER}\` |
+          | forwardproxy | \`${NAIVE_TAG}\` |
+          | 构建时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |
+
+          校验值见 \`checksums.txt\`，构建详情见 \`build-info.txt\`。
+
+          > 本 tag 发布后不再改动。装机时 install.sh 会强制校验 sha256，
+          > 下载或校验失败会自动回落到本机编译。" \
+            --latest=false \
+            caddy-linux-amd64 caddy-linux-arm64 checksums.txt build-info.txt \
+            LICENSE-caddy LICENSE-forwardproxy
+          echo "已发布到 ${RELEASE_TAG}" >> "$GITHUB_STEP_SUMMARY"
